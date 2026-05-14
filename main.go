@@ -1,66 +1,133 @@
 package main
 
 import (
-    "fmt"
-    "log"
-    "net/http"
-    "net/http/httputil"
-    "net/url"
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"sync"
+	"time"
 )
 
-// ServerPool holds our list of backends and tracks the current one
-type ServerPool struct {
-	mux sync.Mutex
-	Backends []*url.URL
-	Current int
+type Backend struct {
+	URL   *url.URL
+	Alive bool
+	mux   sync.RWMutex
 }
 
-// Next returns the next server in the list using Round Robin
+func (b *Backend) SetAlive(alive bool) {
+	b.mux.Lock()
+	defer b.mux.Unlock()
+	b.Alive = alive
+}
+
+func (b *Backend) IsAlive() bool {
+	b.mux.RLock()
+	defer b.mux.RUnlock()
+	return b.Alive
+}
+
+// checkHealth tries to open a TCP connection to the backend
+func (b *Backend) CheckHealth() bool {
+	timeout := 2 * time.Second
+	conn, err := net.DialTimeout("tcp", b.URL.Host, timeout)
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	return true
+}
+
+type ServerPool struct {
+	mux      sync.Mutex
+	Backends []*Backend
+	Current  int
+}
+
+// Next returns the URL of the next server
 func (s *ServerPool) Next() *url.URL {
 	s.mux.Lock()
-    defer s.mux.Unlock() 
-	target := s.Backends[s.Current]
-	s.Current = (s.Current + 1) % len(s.Backends)
-	return target
+	defer s.mux.Unlock()
+
+	// Loop through all backends to find a healthy one
+	for i := 0; i < len(s.Backends); i++ {
+		next := (s.Current + i) % len(s.Backends)
+		if s.Backends[next].IsAlive() {
+			s.Current = (next + 1) % len(s.Backends)
+			return s.Backends[next].URL
+		}
+	}
+	return nil
+}
+
+// HealthCheck loops through all backends and updates their status
+func (s *ServerPool) HealthCheck() {
+	for _, b := range s.Backends {
+		status := b.CheckHealth()
+		b.SetAlive(status)
+
+		msg := "online"
+		if !status {
+			msg = "offline"
+		}
+		fmt.Printf("Status Check: %s is %s\n", b.URL.Host, msg)
+	}
 }
 
 func main() {
-    fmt.Println("Starting Load Balancer on port 8000...")
+	fmt.Println("Starting Load Balancer on port 8000...")
 
-	// List of backend servers to balance across
 	serverList := []string{
 		"http://localhost:8081",
 		"http://localhost:8082",
 		"http://localhost:8083",
 	}
 
-	// Slice to hold the parsed URL objects
-	backends := make([]*url.URL, 0, len(serverList))
+	backends := make([]*Backend, 0, len(serverList))
 
-	// Convert raw strings into URL objects
 	for _, rawStr := range serverList {
-        myUrl, err := url.Parse(rawStr)
-        if err != nil {
-            log.Fatalf("Invalid backend URL %s: %v", rawStr, err)
-        }
-        backends = append(backends, myUrl)
-    }
-
-	// Initialize the server pool
-	pool := ServerPool{
-		Backends: backends,
-		Current: 0,
+		myUrl, err := url.Parse(rawStr)
+		if err != nil {
+			log.Fatalf("Invalid backend URL %s: %v", rawStr, err)
+		}
+		backends = append(backends, &Backend{
+			URL:   myUrl,
+			Alive: true,
+		})
 	}
 
-	// Handler that runs for every curl request
+	pool := ServerPool{
+		Backends: backends,
+		Current:  0,
+	}
+
+	fmt.Println("Performing initial health check...")
+    pool.HealthCheck()
+	
+    ticker := time.NewTicker(10 * time.Second)
+    go func() {
+        // This loop runs every time the ticker sends a value
+        for range ticker.C {
+            fmt.Println("Starting background health check...")
+            pool.HealthCheck()
+        }
+    }()
+
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		target := pool.Next()
-		fmt.Printf("Directing traffic to: %s\n", target.Host)
-		proxy := httputil.NewSingleHostReverseProxy(target)
+		targetUrl := pool.Next()
+
+		// If targetUrl is nil, all backends are down
+		if targetUrl == nil {
+			http.Error(w, "Service Unavailable: No healthy backends", http.StatusServiceUnavailable)
+			return
+		}
+
+		fmt.Printf("Directing traffic to: %s\n", targetUrl.Host)
+		proxy := httputil.NewSingleHostReverseProxy(targetUrl)
 		proxy.ServeHTTP(w, r)
 	})
 
-	// Start the load balancer server
-    log.Fatal(http.ListenAndServe(":8000", nil))
+	log.Fatal(http.ListenAndServe(":8000", nil))
 }

@@ -1,4 +1,4 @@
-# Load Balancer Project - FYP Prep
+# Load Balancer Project
 
 This project is a Layer 7 Load Balancer built in Go, designed to route traffic across multiple backend Docker containers.
 
@@ -23,13 +23,14 @@ To verify the dummy servers are running, hit their individual mapped ports:
 
 ## Running the Load Balancer
 
-The load balancer currently implements a **Round Robin** algorithm to distribute incoming traffic evenly across the healthy backend servers. It uses a Mutex lock to handle concurrent requests safely without race conditions.
+The load balancer implements a **Round Robin** algorithm with **Active Health Checking**.
 
-1. Ensure the backend Docker environment is running:
-   `docker compose up -d`
-2. Start the proxy locally:
-   `go run main.go`
-3. Test the proxy by sending multiple requests:
-   `curl http://localhost:8000`
+- **Concurrency:** Uses Mutexes and RWMutexes to prevent race conditions during state changes.
+- **Fault Tolerance:** A background Goroutine pings backend servers via TCP every 10 seconds. If a server goes offline, it is dynamically removed from the routing pool. When it recovers, it is added back.
 
-You should see the responses cycle through Server A, Server B, and Server C.
+**To Test Fault Tolerance:**
+
+1. Start the environment: `docker compose up -d`
+2. Start the proxy: `go run main.go`
+3. Send continuous requests to `http://localhost:8000`.
+4. Kill a backend container (e.g., `docker stop server_b`) and observe the traffic automatically route around the failure.
