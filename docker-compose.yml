@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  server_a:
+    build: .
+    environment:
+      - SERVER_NAME=Server A
+    ports:
+      - "8081:8080" # Maps port 8081 on your laptop to 8080 in the container
+
+  server_b:
+    build: .
+    environment:
+      - SERVER_NAME=Server B
+    ports:
+      - "8082:8080"
+
+  server_c:
+    build: .
+    environment:
+      - SERVER_NAME=Server C
+    ports:
+      - "8083:8080"
