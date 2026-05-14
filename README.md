@@ -1,6 +1,6 @@
 # Layer 7 Go Load Balancer
 
-A production-ready Layer 7 reverse proxy and load balancer written in Go. This project was built to explore the fundamentals of Dependable and Distributed Systems (DDS) and Advanced Networking.
+A Layer 7 reverse proxy and load balancer written in Go.
 
 It routes incoming HTTP traffic across a pool of Dockerized backend servers, ensuring high availability even if individual nodes fail.
 
