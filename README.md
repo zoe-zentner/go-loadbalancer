@@ -1,36 +1,93 @@
-# Load Balancer Project
+# Layer 7 Go Load Balancer
 
-This project is a Layer 7 Load Balancer built in Go, designed to route traffic across multiple backend Docker containers.
+A production-ready Layer 7 reverse proxy and load balancer written in Go. This project was built to explore the fundamentals of Dependable and Distributed Systems (DDS) and Advanced Networking.
+
+It routes incoming HTTP traffic across a pool of Dockerized backend servers, ensuring high availability even if individual nodes fail.
+
+## Core Features
+
+- **Round Robin Routing:** Distributes incoming HTTP traffic evenly across a pool of healthy backend servers.
+- **Concurrency Safe:** Utilizes `sync.Mutex` and `sync.RWMutex` to prevent race conditions during simultaneous traffic spikes and backend state changes.
+- **Active Fault Tolerance:** A background Goroutine continuously pings backends via TCP. Offline servers are dynamically removed from the routing pool and re-added automatically upon recovery.
+- **Dynamic Configuration:** Reads target URLs, ports, and timeout settings from a central JSON file, requiring no code recompilation to alter network behavior.
 
 ## Useful Docker Commands
 
+The backend servers are managed via Docker Compose. Here are the commands to control the environment:
+
 - **Start the environment (in background):**
-  `docker compose up --build -d`
-- **View live logs of all servers:**
-  `docker compose logs -f`
-- **Shut down the environment:**
-  `docker compose down`
-- **Shut down and wipe out volumes/networks (clean slate):**
-  `docker compose down -v`
 
-## Testing the Backend
+  ```bash
+  docker compose up --build -d
+  ```
 
-To verify the dummy servers are running, hit their individual mapped ports:
+- **View live logs of all backend servers:**
 
-- `curl http://localhost:8081` (Server A)
-- `curl http://localhost:8082` (Server B)
-- `curl http://localhost:8083` (Server C)
+  ```bash
+  docker compose logs -f
+  ```
 
-## Running the Load Balancer
+- **Stop a specific server (useful for testing failure):**
 
-The load balancer implements a **Round Robin** algorithm with **Active Health Checking**.
+  ```bash
+  docker stop load-balancer-server_b-1
+  ```
 
-- **Concurrency:** Uses Mutexes and RWMutexes to prevent race conditions during state changes.
-- **Fault Tolerance:** A background Goroutine pings backend servers via TCP every 10 seconds. If a server goes offline, it is dynamically removed from the routing pool. When it recovers, it is added back.
+  _(You can replace this with your exact container name if it differs.)_
 
-**To Test Fault Tolerance:**
+- **Restart a stopped server (useful for testing recovery):**
 
-1. Start the environment: `docker compose up -d`
-2. Start the proxy: `go run main.go`
-3. Send continuous requests to `http://localhost:8000`.
-4. Kill a backend container (e.g., `docker stop server_b`) and observe the traffic automatically route around the failure.
+  ```bash
+  docker start load-balancer-server_b-1
+  ```
+
+- **Shut down the entire environment:**
+  ```bash
+  docker compose down
+  ```
+
+## Getting Started
+
+### 1. Start the Backend Pool
+
+Spin up the three identical Go web servers for testing.
+
+```bash
+docker compose up -d
+```
+
+### 2. Configure the Load Balancer
+
+Create or edit the `config.json` file to control the load balancer's behavior. You can adjust the health check interval and add or remove backends here:
+
+```json
+{
+  "port": ":8000",
+  "backends": [
+    "http://localhost:8081",
+    "http://localhost:8082",
+    "http://localhost:8083"
+  ],
+  "timeout_seconds": 2,
+  "health_check_interval_seconds": 10
+}
+```
+
+### 3. Run the Load Balancer
+
+Start the application. You can specify a custom config file path using the `-config` flag.
+
+```bash
+go run main.go -config=config.json
+```
+
+### 4. Test Fault Tolerance (Chaos Testing)
+
+To see the dependable systems logic in action, send a continuous stream of requests to the load balancer:
+
+```bash
+# On Linux/macOS/WSL
+while true; do curl http://localhost:8000; sleep 1; done
+```
+
+While the loop is running, open a new terminal tab and stop one of your Docker containers (e.g., `docker stop load-balancer-server_b-1`). Within 10 seconds, the load balancer's background checker will detect the TCP timeout, mark the node as dead, and dynamically route all new traffic to the surviving nodes without dropping any user requests.
